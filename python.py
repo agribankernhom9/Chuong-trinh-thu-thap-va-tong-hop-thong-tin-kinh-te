@@ -195,8 +195,8 @@ def impute_missing(df: pd.DataFrame, method: str):
 
 
 def _format_number_vn(val, decimals_auto=True, force_decimals=None):
-    """Format number theo chuẩn Việt Nam: . tách nghìn, , tách thập phân.
-    - force_decimals: nếu không None thì luôn dùng số chữ số sau dấu phẩy này
+    """Định dạng số kiểu Việt Nam: . tách nghìn, , tách thập phân.
+    - force_decimals: nếu khác None thì luôn dùng số chữ số sau dấu phẩy này
     - nếu decimals_auto: |v|>=1000 -> 0; 1<=|v|<1000 -> 2; |v|<1 -> 3
     """
     import pandas as _pd
@@ -218,7 +218,7 @@ def _format_number_vn(val, decimals_auto=True, force_decimals=None):
             d = 3
     else:
         d = 2
-    s = f"{v:,.{d}f}"          # 1,234.56
+    s = f"{v:,.{d}f}"
     s = s.replace(",", "X").replace(".", ",").replace("X", ".")
     return s
 
@@ -337,7 +337,7 @@ with st.sidebar:
             label = "VNM - Việt Nam" if _id == "VNM" else f"{_id} — {_name}"
             labels.append(label)
             id_to_label[label] = (_id, "Việt Nam" if _id == "VNM" else _name)
-        default_idx = int((countries_df["id"] == "VNM").idxmax()) if "VNM" in set(countries_df["id"]) else 0
+        default_idx = labels.index("VNM - Việt Nam") if "VNM - Việt Nam" in labels else (int((countries_df["id"] == "VNM").idxmax()) if "VNM" in set(countries_df["id"]) else 0)
         country_label = st.selectbox("Quốc gia", options=labels, index=default_idx)
         sel_country, sel_country_name = id_to_label[country_label][0], id_to_label[country_label][1]
     except Exception:
@@ -498,15 +498,25 @@ with tab_charts:
             st.markdown("**Biểu đồ đường — Xu hướng theo thời gian**")
             m = df_plot.melt(id_vars="Year", var_name="Indicator", value_name="Value")
             m["Indicator"] = m["Indicator"].apply(get_vn_label_with_unit)
-            fig = px.line(m, x="Year", y="Value", color="Indicator", markers=True)
+            def _fmt_row(r):
+                is_pct = "%" in str(r["Indicator"])
+                val = _format_number_vn(r["Value"], decimals_auto=False, force_decimals=2) + " %" if is_pct else _format_number_vn(r["Value"])
+                return f"{r['Indicator']}={val}<br>Năm={int(r['Year'])}"
+            m["Hover"] = m.apply(_fmt_row, axis=1)
+            fig = px.line(m, x="Year", y="Value", color="Indicator", markers=True, hover_data=None)
+            fig.update_traces(hovertemplate="%{text}<extra></extra>", text=m["Hover"])
             fig.update_layout(height=450, legend_title_text="Chỉ tiêu")
             st.plotly_chart(fig, use_container_width=True)
 
         if "Bar" in chart_types:
             st.markdown("**Biểu đồ cột — So sánh theo năm**")
             bar_col = st.selectbox("Chỉ tiêu cho Bar", options=selected_series_for_plot, format_func=lambda c: get_vn_label_with_unit(c))
-            fig = px.bar(df_plot, x="Year", y=bar_col, title=get_vn_label_with_unit(bar_col))
-            fig.update_layout(height=420, yaxis_title=get_vn_label_with_unit(bar_col))
+            df_bar = df_plot[["Year", bar_col]].copy()
+            _is_pct = "%" in get_vn_label_with_unit(bar_col)
+            df_bar["Hover"] = df_bar.apply(lambda r: f"{get_vn_label_with_unit(bar_col)}=" + (_format_number_vn(r[bar_col], decimals_auto=False, force_decimals=2) + " %" if _is_pct else _format_number_vn(r[bar_col])) + f"<br>Năm={int(r['Year'])}", axis=1)
+            fig = px.bar(df_bar, x="Year", y=bar_col, title=get_vn_label_with_unit(bar_col), hover_data=None)
+            fig.update_traces(hovertemplate="%{text}<extra></extra>", text=df_bar["Hover"])
+            fig.update_layout(height=420)
             st.plotly_chart(fig, use_container_width=True)
 
         if "Combo" in chart_types:
@@ -519,9 +529,13 @@ with tab_charts:
                 line_c = st.selectbox("Line =", options=cand_line if cand_line else selected_series_for_plot,
                                       format_func=lambda c: get_vn_label_with_unit(c), key="line_combo")
             fig = go.Figure()
-            fig.add_bar(x=df_plot["Year"], y=df_plot[bar_c], name=get_vn_label_with_unit(bar_c))
+            _is_pct_bar = "%" in get_vn_label_with_unit(bar_c)
+            bar_hover = [f"{get_vn_label_with_unit(bar_c)}=" + (_format_number_vn(v, decimals_auto=False, force_decimals=2) + " %" if _is_pct_bar else _format_number_vn(v)) + f"<br>Năm={int(y)}" for v, y in zip(df_plot[bar_c], df_plot["Year"])]
+            fig.add_bar(x=df_plot["Year"], y=df_plot[bar_c], name=get_vn_label_with_unit(bar_c), hovertext=bar_hover, hovertemplate="%{hovertext}<extra></extra>")
+            _is_pct_line = "%" in get_vn_label_with_unit(line_c)
+            line_hover = [f"{get_vn_label_with_unit(line_c)}=" + (_format_number_vn(v, decimals_auto=False, force_decimals=2) + " %" if _is_pct_line else _format_number_vn(v)) + f"<br>Năm={int(y)}" for v, y in zip(df_plot[line_c], df_plot["Year"])]
             fig.add_trace(go.Scatter(x=df_plot["Year"], y=df_plot[line_c], mode="lines+markers",
-                                     name=get_vn_label_with_unit(line_c), yaxis="y2"))
+                                     name=get_vn_label_with_unit(line_c), yaxis="y2", hovertext=line_hover, hovertemplate="%{hovertext}<extra></extra>"))
             fig.update_layout(
                 height=450,
                 yaxis=dict(title=get_vn_label_with_unit(bar_c)),
@@ -542,8 +556,11 @@ with tab_charts:
             if sc.empty:
                 st.info("Không đủ dữ liệu để vẽ Scatter.")
             else:
-                fig = px.scatter(sc, x=scatter_x, y=scatter_y, hover_data=["Year"])
-                fig.update_layout(xaxis_title=get_vn_label_with_unit(scatter_x), yaxis_title=get_vn_label_with_unit(scatter_y))
+                isx = "%" in get_vn_label_with_unit(scatter_x)
+                isy = "%" in get_vn_label_with_unit(scatter_y)
+                _hover = [f"{get_vn_label_with_unit(scatter_x)}=" + (_format_number_vn(x, decimals_auto=False, force_decimals=2) + " %" if isx else _format_number_vn(x)) + "<br>" + f"{get_vn_label_with_unit(scatter_y)}=" + (_format_number_vn(y, decimals_auto=False, force_decimals=2) + " %" if isy else _format_number_vn(y)) + f"<br>Năm={int(yr)}" for x, y, yr in zip(sc[scatter_x], sc[scatter_y], sc["Year"])]
+                fig = px.scatter(sc, x=scatter_x, y=scatter_y, hover_data=None)
+                fig.update_traces(hovertext=_hover, hovertemplate="%{hovertext}<extra></extra>")
                 fig.update_layout(height=420, xaxis_title=get_vn_label_with_unit(scatter_x), yaxis_title=get_vn_label_with_unit(scatter_y))
                 trend = add_trendline(sc, scatter_x, scatter_y)
                 if trend:
@@ -564,37 +581,21 @@ with tab_charts:
                 fig.update_layout(height=520, coloraxis_colorbar=dict(title="r"))
                 st.plotly_chart(fig, use_container_width=True)
 
-
 with tab_stats:
     st.subheader("Bảng thống kê mô tả")
     if stats_df.empty:
         st.info("Chưa có dữ liệu để tính thống kê.")
     else:
         disp = stats_df.copy()
-
-        # Xác định hàng là phần trăm nếu tên chỉ tiêu có chứa "%"
-        is_percent_row = disp["Chỉ tiêu"].astype(str).str.contains("%")
-
-        # Áp dụng định dạng số Việt Nam cho toàn bộ cột số
         num_cols = ["Giá trị TB (Mean)", "Độ lệch chuẩn (Std)", "Nhỏ nhất (Min)",
                     "Lớn nhất (Max)", "Trung vị (Median)", "Q1", "Q3", "Hệ số biến thiên (CV%)"]
         for c in num_cols:
             if c in disp.columns:
-                def _fmt(v, is_pct):
-                    # CV% và các chỉ tiêu %: 2 chữ số sau dấu phẩy
-                    if c == "Hệ số biến thiên (CV%)" or is_pct:
-                        s = _format_number_vn(v, decimals_auto=False, force_decimals=2)
-                        return (s + " %") if s != "" else s
-                    # còn lại định dạng tự động
-                    return _format_number_vn(v)
-                disp[c] = [ _fmt(v, bool(is_percent_row.iloc[i]) if i < len(is_percent_row) else False)
-                            for i, v in enumerate(disp[c].tolist()) ]
-
+                disp[c] = disp[c].astype(float).round(3)
         disp_show = disp.copy()
         disp_show.index = np.arange(1, len(disp_show) + 1)
         disp_show.index.name = "STT"
         st.dataframe(disp_show, use_container_width=True, height=420)
-        st.caption("Nguồn dữ liệu: " + "; ".join(source_list))
         st.caption("Nguồn dữ liệu: " + "; ".join(source_list))
 
 with tab_download:
