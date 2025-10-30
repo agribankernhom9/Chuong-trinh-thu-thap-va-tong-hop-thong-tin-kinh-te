@@ -8,7 +8,8 @@ import os
 import io
 import math
 import requests
-
+import numpy as np
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
@@ -194,11 +195,10 @@ def impute_missing(df: pd.DataFrame, method: str):
 
 
 def _format_number_vn(val, decimals_auto=True, force_decimals=None):
-    """Format number with Vietnamese style: thousands '.', decimal ','.
-    - If force_decimals is not None, use that count.
-    - Else if decimals_auto True: >=1000 -> 0, 1..1000 -> 2, <1 -> 3.
+    """Format number theo chuẩn Việt Nam: . tách nghìn, , tách thập phân.
+    - force_decimals: nếu không None thì luôn dùng số chữ số sau dấu phẩy này
+    - nếu decimals_auto: |v|>=1000 -> 0; 1<=|v|<1000 -> 2; |v|<1 -> 3
     """
-    import math
     import pandas as _pd
     if _pd.isna(val):
         return ""
@@ -210,14 +210,16 @@ def _format_number_vn(val, decimals_auto=True, force_decimals=None):
         d = force_decimals
     elif decimals_auto:
         av = abs(v)
-        if av >= 1000: d = 0
-        elif av >= 1: d = 2
-        else: d = 3
+        if av >= 1000:
+            d = 0
+        elif av >= 1:
+            d = 2
+        else:
+            d = 3
     else:
         d = 2
-    s = f"{v:,.{d}f}"  # US style 1,234.56
-    # swap separators to Vietnamese
-    s = s.replace(',', 'X').replace('.', ',').replace('X', '.')
+    s = f"{v:,.{d}f}"          # 1,234.56
+    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
     return s
 
 
@@ -246,15 +248,9 @@ def compute_descriptive_stats(df: pd.DataFrame) -> pd.DataFrame:
                       "Trung vị (Median)": median, "Q1": q1, "Q3": q3, "Hệ số biến thiên (CV%)": cv})
     return pd.DataFrame(stats)
 
-
-
-
 def correlation_matrix(df: pd.DataFrame) -> pd.DataFrame:
     cols = [c for c in df.columns if c != "Year"]
     return df[cols].corr(method="pearson") if len(cols) >= 2 else pd.DataFrame()
-
-
-
 
 def add_trendline(df: pd.DataFrame, x: str, y: str):
     sub = df[[x, y]].dropna()
@@ -264,11 +260,6 @@ def add_trendline(df: pd.DataFrame, x: str, y: str):
     x_line = np.linspace(sub[x].min(), sub[x].max(), 100)
     y_line = a * x_line + b
     return x_line, y_line, a, b
-
-
-def is_proxy_label(src_text: str) -> bool:
-    return isinstance(src_text, str) and ("proxy" in src_text.lower() or "placeholder" in src_text.lower())
-
 
 def to_excel_bytes(df_data: pd.DataFrame, df_stats: pd.DataFrame, corr: pd.DataFrame) -> bytes:
     import openpyxl  # ensure engine present
@@ -334,7 +325,6 @@ st.markdown("""
 
 # ---------------------------
 # Sidebar thiết lập
-
 # ---------------------------
 with st.sidebar:
     st.header("Thiết lập")
@@ -511,14 +501,14 @@ with tab_charts:
             fig = px.line(m, x="Year", y="Value", color="Indicator", markers=True)
             fig.update_layout(height=450, legend_title_text="Chỉ tiêu")
             st.plotly_chart(fig, use_container_width=True)
-            
+
         if "Bar" in chart_types:
             st.markdown("**Biểu đồ cột — So sánh theo năm**")
             bar_col = st.selectbox("Chỉ tiêu cho Bar", options=selected_series_for_plot, format_func=lambda c: get_vn_label_with_unit(c))
             fig = px.bar(df_plot, x="Year", y=bar_col, title=get_vn_label_with_unit(bar_col))
-            fig.update_layout(height=420)
+            fig.update_layout(height=420, yaxis_title=get_vn_label_with_unit(bar_col))
             st.plotly_chart(fig, use_container_width=True)
-            
+
         if "Combo" in chart_types:
             st.markdown("**Biểu đồ kết hợp — Bar + Line**")
             c1, c2 = st.columns(2)
@@ -539,7 +529,7 @@ with tab_charts:
                 legend_title_text="Chỉ tiêu"
             )
             st.plotly_chart(fig, use_container_width=True)
-            
+
         if "Scatter" in chart_types:
             st.markdown("**Biểu đồ phân tán — Tương quan hai biến**")
             colx, coly = st.columns(2)
@@ -560,7 +550,7 @@ with tab_charts:
                     x_line, y_line, a, b = trend
                     fig.add_trace(go.Scatter(x=x_line, y=y_line, mode="lines", name=f"Đường xu hướng (y≈{a:.2f}x+{b:.2f})"))
                 st.plotly_chart(fig, use_container_width=True)
-            
+
         if "Heatmap" in chart_types:
             st.markdown("**Biểu đồ nhiệt — Ma trận tương quan**")
             corr = correlation_matrix(df_plot)
@@ -573,27 +563,46 @@ with tab_charts:
                 fig = px.imshow(corr_vn, text_auto=".2f", aspect="auto", color_continuous_scale="RdBu", origin="lower")
                 fig.update_layout(height=520, coloraxis_colorbar=dict(title="r"))
                 st.plotly_chart(fig, use_container_width=True)
-            
+
+
 with tab_stats:
     st.subheader("Bảng thống kê mô tả")
     if stats_df.empty:
         st.info("Chưa có dữ liệu để tính thống kê.")
     else:
         disp = stats_df.copy()
+
+        # Xác định hàng là phần trăm nếu tên chỉ tiêu có chứa "%"
+        is_percent_row = disp["Chỉ tiêu"].astype(str).str.contains("%")
+
+        # Áp dụng định dạng số Việt Nam cho toàn bộ cột số
         num_cols = ["Giá trị TB (Mean)", "Độ lệch chuẩn (Std)", "Nhỏ nhất (Min)",
                     "Lớn nhất (Max)", "Trung vị (Median)", "Q1", "Q3", "Hệ số biến thiên (CV%)"]
-        # Xác định các chỉ tiêu dạng % theo nhãn
-        is_percent_row = disp["Chỉ tiêu"].astype(str).str.contains("%")
         for c in num_cols:
             if c in disp.columns:
-                def _fmt_cell(v, is_pct):
+                def _fmt(v, is_pct):
+                    # CV% và các chỉ tiêu %: 2 chữ số sau dấu phẩy
                     if c == "Hệ số biến thiên (CV%)" or is_pct:
-                        return _format_number_vn(v, decimals_auto=False, force_decimals=2) + " %"
-                    else:
-                        return _format_number_vn(v)
-                disp[c] = [ _fmt_cell(v, is_percent_row.iloc[i] if i < len(is_percent_row) else False) 
+                        s = _format_number_vn(v, decimals_auto=False, force_decimals=2)
+                        return (s + " %") if s != "" else s
+                    # còn lại định dạng tự động
+                    return _format_number_vn(v)
+                disp[c] = [ _fmt(v, bool(is_percent_row.iloc[i]) if i < len(is_percent_row) else False)
                             for i, v in enumerate(disp[c].tolist()) ]
-        st.dataframe(disp, use_container_width=True)
+
+        disp_show = disp.copy()
+        disp_show.index = np.arange(1, len(disp_show) + 1)
+        disp_show.index.name = "STT"
+        st.dataframe(disp_show, use_container_width=True, height=420)
+        st.caption("Nguồn dữ liệu: " + "; ".join(source_list))
+        st.caption("Nguồn dữ liệu: " + "; ".join(source_list))
+
+with tab_download:
+    st.subheader("Tải dữ liệu")
+    if imputed_df.empty:
+        st.info("Chưa có dữ liệu để tải.")
+    else:
+        bytes_xlsx = to_excel_bytes(imputed_df, stats_df, corr_df if not corr_df.empty else pd.DataFrame())
         st.download_button(
             label="⬇️ Tải Excel (Data + Stats + Correlation)",
             data=bytes_xlsx,
@@ -708,4 +717,4 @@ Trình bày NGẮN GỌN theo các đề mục sau (chỉ dùng tiêu đề ti�
                         st.error(f"Lỗi khi gọi OpenAI: {e}")
 
 # Footer
-st.caption("© 2025 — Viet Macro Intelligence • Nguồn: " + "; ".join(source_list) + "")
+st.caption("© 2025 — Viet Macro Intelligence • Nguồn: " + "; ".join(source_list))
