@@ -8,25 +8,6 @@ import os
 import io
 import math
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-import numpy as np
-import pandas as pd
-# --- HTTP session with retry/backoff ---
-_SESSION = None
-def _get_session():
-    global _SESSION
-    if _SESSION is None:
-        _SESSION = requests.Session()
-        retry = Retry(total=4, backoff_factor=0.6, status_forcelist=(429, 500, 502, 503, 504))
-        adapter = HTTPAdapter(max_retries=retry)
-        _SESSION.mount("http://", adapter)
-        _SESSION.mount("https://", adapter)
-    return _SESSION
-
-def http_get(url: str, timeout: int = 30):
-    s = _get_session()
-    return s.get(url, timeout=timeout)
 
 import plotly.express as px
 import plotly.graph_objects as go
@@ -119,7 +100,7 @@ def is_percent_unit(code: str) -> bool:
 @st.cache_data(show_spinner=False, ttl=60*60)
 def list_wb_countries():
     url = f"{WB_API_BASE}/country?format=json&per_page=400"
-    resp = http_get(url, timeout=30)
+    resp = requests.get(url, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     rows = []
@@ -131,7 +112,7 @@ def list_wb_countries():
 
 def _fetch_wb_indicator(country_code: str, indicator_code: str, start_year: int, end_year: int) -> pd.DataFrame:
     url = f"{WB_API_BASE}/country/{country_code}/indicator/{indicator_code}?date={start_year}:{end_year}&format=json&per_page=12000"
-    r = http_get(url, timeout=60)
+    r = requests.get(url, timeout=60)
     r.raise_for_status()
     js = r.json()
     if not isinstance(js, list) or len(js) < 2 or js[1] is None:
@@ -164,7 +145,7 @@ def fetch_wb_indicators_parallel(country_code: str, indicator_codes: list, start
 def fetch_undp_hdi(country_iso3: str, start_year: int, end_year: int) -> pd.DataFrame:
     try:
         url = f"{UNDP_API_BASE}v1/indicators/137506?countries={country_iso3}&years={start_year}-{end_year}"
-        r = http_get(url, timeout=40)
+        r = requests.get(url, timeout=40)
         r.raise_for_status()
         js = r.json()
         data = js.get("data", [])
@@ -266,28 +247,6 @@ def compute_descriptive_stats(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(stats)
 
 
-def apply_chart_transforms(df: pd.DataFrame, series: list, base_year: int | None, use_index100: bool, show_yoy: bool):
-    sub = df[["Year"] + series].copy()
-    sub = sub.sort_values("Year")
-    # Index=100
-    if use_index100 and base_year is not None and base_year in set(sub["Year"]):
-        base_vals = sub.loc[sub["Year"] == base_year, series].iloc[0]
-        for c in series:
-            try:
-                b = float(base_vals[c])
-                if b and not pd.isna(b) and b != 0:
-                    sub[c] = sub[c] / b * 100.0
-            except Exception:
-                pass
-        sub.rename(columns={c: f"{c} (Index=100@{base_year})" for c in series}, inplace=True)
-        series = list(sub.columns[sub.columns != "Year"])
-    # YoY %
-    if show_yoy:
-        for c in list(series):
-            yoy = sub[c].pct_change() * 100.0
-            sub[f"{c} (YoY %)"] = yoy
-        series = [c for c in sub.columns if c != "Year"]
-    return sub, series
 
 
 def correlation_matrix(df: pd.DataFrame) -> pd.DataFrame:
@@ -295,27 +254,6 @@ def correlation_matrix(df: pd.DataFrame) -> pd.DataFrame:
     return df[cols].corr(method="pearson") if len(cols) >= 2 else pd.DataFrame()
 
 
-def compute_cagr_table(df: pd.DataFrame, series: list) -> pd.DataFrame:
-    if df.empty or not series:
-        return pd.DataFrame()
-    t0, t1 = df["Year"].min(), df["Year"].max()
-    n = max(1, int(t1 - t0))
-    rows = []
-    for c in series:
-        s = df[c].dropna()
-        if s.empty:
-            rows.append({"Chỉ tiêu": get_vn_label_with_unit(c), "CAGR (%)": np.nan})
-            continue
-        try:
-            v0 = float(s.iloc[0]); v1 = float(s.iloc[-1])
-            if v0 > 0 and v1 > 0 and n > 0:
-                cagr = (v1 / v0) ** (1/n) - 1.0
-                rows.append({"Chỉ tiêu": get_vn_label_with_unit(c), "CAGR (%)": cagr*100.0})
-            else:
-                rows.append({"Chỉ tiêu": get_vn_label_with_unit(c), "CAGR (%)": np.nan})
-        except Exception:
-            rows.append({"Chỉ tiêu": get_vn_label_with_unit(c), "CAGR (%)": np.nan})
-    return pd.DataFrame(rows)
 
 
 def add_trendline(df: pd.DataFrame, x: str, y: str):
@@ -396,22 +334,6 @@ st.markdown("""
 
 # ---------------------------
 # Sidebar thiết lập
-# --- Nạp dữ liệu cục bộ (tùy chọn) ---
-uploaded_local = st.sidebar.file_uploader("Tải thêm dữ liệu CSV/Excel (có cột Year)", type=["csv","xlsx"])
-local_df = pd.DataFrame()
-if uploaded_local is not None:
-    try:
-        if uploaded_local.name.lower().endswith(".csv"):
-            local_df = pd.read_csv(uploaded_local)
-        else:
-            local_df = pd.read_excel(uploaded_local)
-        # Chuẩn hóa tên cột
-        local_df.rename(columns={c: str(c).strip() for c in local_df.columns}, inplace=True)
-        if "Year" not in local_df.columns:
-            st.sidebar.warning("Tệp bổ sung phải có cột 'Year'. Đã bỏ qua nạp tệp.")
-            local_df = pd.DataFrame()
-    except Exception as e:
-        st.sidebar.error(f"Lỗi đọc tệp: {e}")
 
 # ---------------------------
 with st.sidebar:
@@ -452,7 +374,7 @@ with st.sidebar:
 
     # Chỉ số mở rộng (SBV/IMF/GSO)
     with st.expander("Chỉ số mở rộng (SBV / IMF / GSO)"):
-        ext_map = {f"{label} [{code}] — nguồn: {src}" + (" 🔶 Proxy" if is_proxy_label(src) else ""): code for code, label, unit, src in EXTENDED_INDICATORS}
+        ext_map = {f"{label} [{code}] — nguồn: {src}": code for code, label, unit, src in EXTENDED_INDICATORS}
         ext_sel = st.multiselect(
             "Chọn chỉ số mở rộng",
             options=list(ext_map.keys()),
@@ -472,10 +394,8 @@ with st.spinner("Đang lấy dữ liệu..."):
     ext_d = {code: fetch_extended_indicator(sel_country, code, int(start_year), int(end_year)) for code in selected_ext}
 
 dfs = list(wb_d.values()) + list(ext_d.values())
-if not local_df.empty:
-    dfs.append(local_df)
 
-use_hdi = st.sidebar.checkbox("Gộp Chỉ số phát triển con người (HDI) từ UNDP", value=False)
+use_hdi = False
 if use_hdi:
     with st.spinner("Đang lấy HDI từ UNDP..."):
         hdi_df = fetch_undp_hdi(sel_country, int(start_year), int(end_year))
@@ -591,30 +511,14 @@ with tab_charts:
             fig = px.line(m, x="Year", y="Value", color="Indicator", markers=True)
             fig.update_layout(height=450, legend_title_text="Chỉ tiêu")
             st.plotly_chart(fig, use_container_width=True)
-            try:
-                cagr_tbl = compute_cagr_table(df_plot, selected_series_for_plot)
-                if not cagr_tbl.empty:
-                    cagr_tbl["CAGR (%)"] = cagr_tbl["CAGR (%)"].apply(lambda v: _format_number_vn(v, decimals_auto=False, force_decimals=2) + " %" if pd.notna(v) else "")
-                    st.caption("Tốc độ tăng trưởng kép bình quân (CAGR) cho giai đoạn đã chọn")
-                    st.dataframe(cagr_tbl, use_container_width=True)
-            except Exception as _e:
-                pass
-
+            
         if "Bar" in chart_types:
             st.markdown("**Biểu đồ cột — So sánh theo năm**")
             bar_col = st.selectbox("Chỉ tiêu cho Bar", options=selected_series_for_plot, format_func=lambda c: get_vn_label_with_unit(c))
             fig = px.bar(df_plot, x="Year", y=bar_col, title=get_vn_label_with_unit(bar_col))
             fig.update_layout(height=420)
             st.plotly_chart(fig, use_container_width=True)
-            try:
-                cagr_tbl = compute_cagr_table(df_plot, selected_series_for_plot)
-                if not cagr_tbl.empty:
-                    cagr_tbl["CAGR (%)"] = cagr_tbl["CAGR (%)"].apply(lambda v: _format_number_vn(v, decimals_auto=False, force_decimals=2) + " %" if pd.notna(v) else "")
-                    st.caption("Tốc độ tăng trưởng kép bình quân (CAGR) cho giai đoạn đã chọn")
-                    st.dataframe(cagr_tbl, use_container_width=True)
-            except Exception as _e:
-                pass
-
+            
         if "Combo" in chart_types:
             st.markdown("**Biểu đồ kết hợp — Bar + Line**")
             c1, c2 = st.columns(2)
@@ -635,15 +539,7 @@ with tab_charts:
                 legend_title_text="Chỉ tiêu"
             )
             st.plotly_chart(fig, use_container_width=True)
-            try:
-                cagr_tbl = compute_cagr_table(df_plot, selected_series_for_plot)
-                if not cagr_tbl.empty:
-                    cagr_tbl["CAGR (%)"] = cagr_tbl["CAGR (%)"].apply(lambda v: _format_number_vn(v, decimals_auto=False, force_decimals=2) + " %" if pd.notna(v) else "")
-                    st.caption("Tốc độ tăng trưởng kép bình quân (CAGR) cho giai đoạn đã chọn")
-                    st.dataframe(cagr_tbl, use_container_width=True)
-            except Exception as _e:
-                pass
-
+            
         if "Scatter" in chart_types:
             st.markdown("**Biểu đồ phân tán — Tương quan hai biến**")
             colx, coly = st.columns(2)
@@ -657,39 +553,27 @@ with tab_charts:
                 st.info("Không đủ dữ liệu để vẽ Scatter.")
             else:
                 fig = px.scatter(sc, x=scatter_x, y=scatter_y, hover_data=["Year"])
+                fig.update_layout(xaxis_title=get_vn_label_with_unit(scatter_x), yaxis_title=get_vn_label_with_unit(scatter_y))
                 fig.update_layout(height=420, xaxis_title=get_vn_label_with_unit(scatter_x), yaxis_title=get_vn_label_with_unit(scatter_y))
                 trend = add_trendline(sc, scatter_x, scatter_y)
                 if trend:
                     x_line, y_line, a, b = trend
                     fig.add_trace(go.Scatter(x=x_line, y=y_line, mode="lines", name=f"Đường xu hướng (y≈{a:.2f}x+{b:.2f})"))
                 st.plotly_chart(fig, use_container_width=True)
-            try:
-                cagr_tbl = compute_cagr_table(df_plot, selected_series_for_plot)
-                if not cagr_tbl.empty:
-                    cagr_tbl["CAGR (%)"] = cagr_tbl["CAGR (%)"].apply(lambda v: _format_number_vn(v, decimals_auto=False, force_decimals=2) + " %" if pd.notna(v) else "")
-                    st.caption("Tốc độ tăng trưởng kép bình quân (CAGR) cho giai đoạn đã chọn")
-                    st.dataframe(cagr_tbl, use_container_width=True)
-            except Exception as _e:
-                pass
-
+            
         if "Heatmap" in chart_types:
             st.markdown("**Biểu đồ nhiệt — Ma trận tương quan**")
             corr = correlation_matrix(df_plot)
             if corr.empty:
                 st.info("Chưa đủ biến số để tính tương quan.")
             else:
-                fig = px.imshow(corr, text_auto=".2f", aspect="auto", color_continuous_scale="RdBu", origin="lower")
+                corr_vn = corr.copy()
+                corr_vn.columns = [get_vn_label_with_unit(c) for c in corr_vn.columns]
+                corr_vn.index = [get_vn_label_with_unit(c) for c in corr_vn.index]
+                fig = px.imshow(corr_vn, text_auto=".2f", aspect="auto", color_continuous_scale="RdBu", origin="lower")
                 fig.update_layout(height=520, coloraxis_colorbar=dict(title="r"))
                 st.plotly_chart(fig, use_container_width=True)
-            try:
-                cagr_tbl = compute_cagr_table(df_plot, selected_series_for_plot)
-                if not cagr_tbl.empty:
-                    cagr_tbl["CAGR (%)"] = cagr_tbl["CAGR (%)"].apply(lambda v: _format_number_vn(v, decimals_auto=False, force_decimals=2) + " %" if pd.notna(v) else "")
-                    st.caption("Tốc độ tăng trưởng kép bình quân (CAGR) cho giai đoạn đã chọn")
-                    st.dataframe(cagr_tbl, use_container_width=True)
-            except Exception as _e:
-                pass
-
+            
 with tab_stats:
     st.subheader("Bảng thống kê mô tả")
     if stats_df.empty:
@@ -804,7 +688,7 @@ Trình bày NGẮN GỌN theo các đề mục sau (chỉ dùng tiêu đề ti�
             if not OPENAI_OK:
                 st.warning("⚠️ Mô-đun AI chưa sẵn sàng (thiếu thư viện openai). Hãy cài đặt và cấu hình OPENAI_API_KEY.")
             else:
-                api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", "")).strip()
+                api_key = os.getenv("OPENAI_API_KEY", "").strip()
                 if not api_key:
                     st.warning("⚠️ Chưa phát hiện OPENAI_API_KEY. Vui lòng đặt biến môi trường.")
                 else:
@@ -824,4 +708,4 @@ Trình bày NGẮN GỌN theo các đề mục sau (chỉ dùng tiêu đề ti�
                         st.error(f"Lỗi khi gọi OpenAI: {e}")
 
 # Footer
-st.caption("© 2025 — Viet Macro Intelligence • Nguồn: " + "; ".join(source_list) + " • Lưu ý: một số chỉ tiêu dùng nguồn thay thế (Proxy) khi API gốc chưa sẵn; độ trễ công bố khác nhau giữa các nguồn.")
+st.caption("© 2025 — Viet Macro Intelligence • Nguồn: " + "; ".join(source_list) + "")
