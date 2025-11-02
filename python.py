@@ -598,8 +598,11 @@ with tab_charts:
                 _labels = corr.round(2).applymap(lambda v: f"{v:.2f}".replace(".", ","))
                 _labels.index = corr_vn.index
                 _labels.columns = corr_vn.columns
-                fig = px.imshow(corr_vn, text=_labels, aspect="auto", color_continuous_scale="RdBu", origin="lower")
-                fig.update_layout(separators=",.")
+                fig = go.Figure(data=go.Heatmap(z=corr_vn.values, x=corr_vn.columns, y=corr_vn.index,
+                                        colorscale="RdBu", zmid=0, zsmooth=False,
+                                        text=_labels.values, texttemplate="%{text}") )
+                fig.update_traces(colorbar_tickformat=",.2f")
+                fig.update_layout(separators=",.", margin=dict(t=60,r=20,b=40,l=60))
                 fig.update_coloraxes(colorbar_tickformat=",.2f")
                 fig.update_layout(height=520, coloraxis_colorbar=dict(title="r"))
                 fig.update_layout(margin=dict(t=60,r=20,b=40,l=60), legend=dict(orientation="h", yanchor="top", y=-0.2), uniformtext_minsize=10, uniformtext_mode="hide")
