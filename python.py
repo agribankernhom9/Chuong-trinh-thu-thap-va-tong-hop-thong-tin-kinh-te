@@ -528,7 +528,8 @@ with tab_charts:
                                          hovertemplate="%{customdata[0]}=%{customdata[2]}<br>Năm=%{customdata[1]}<extra></extra>",
                                          visible=vis))
             fig.update_layout(height=450, legend_title_text="Chỉ tiêu", separators=",.", xaxis_title="Năm thu thập", yaxis_title="Giá trị")
-            fig.update_yaxes(tickformat=",.2f" if m["__is_pct__"].all() else ",.0f")
+            all_pct = m["Indicator"].astype(str).str.contains("%").all()
+            fig.update_yaxes(tickformat=",.2f" if all_pct else ",.0f")
             fig.update_xaxes(tickformat="d")
             st.plotly_chart(fig, use_container_width=True)
 
