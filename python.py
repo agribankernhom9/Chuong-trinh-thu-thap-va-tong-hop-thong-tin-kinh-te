@@ -506,13 +506,23 @@ with tab_charts:
                 val = _format_number_vn(r["Value"], decimals_auto=False, force_decimals=2) + " %" if is_pct else _format_number_vn(r["Value"])
                 return f"{r['Indicator']}={val}<br>Năm={int(r['Year'])}"
             m["Hover"] = m.apply(_fmt_row, axis=1)
-            fig = px.line(m, x="Year", y="Value", color="Indicator", markers=True, hover_data=None)
-            fig.update_traces(hovertext=m["Hover"], hovertemplate="%{hovertext}<extra></extra>")
-            all_pct = m["Indicator"].astype(str).str.contains("%").all()
+            import plotly.graph_objects as go
+            import numpy as _np
+            # Xây thủ công từng trace để đảm bảo hover đúng tên/giá trị và mặc định 1 line
+            fig = go.Figure()
+            _norm = lambda s: str(s).strip().lower()
+            _default_name = get_vn_label_with_unit("NY.GDP.PCAP.CD")
+            for ind_name in m["Indicator"].drop_duplicates().tolist():
+                sub = m[m["Indicator"] == ind_name].copy()
+                cd = _np.stack([sub["Indicator"].values, sub["Year"].astype(int).values, sub["__val_fmt__"].values], axis=-1)
+                vis = True if _norm(ind_name) == _norm(_default_name) else "legendonly"
+                fig.add_trace(go.Scatter(x=sub["Year"], y=sub["Value"], mode="lines+markers", name=ind_name,
+                                         customdata=cd,
+                                         hovertemplate="%{customdata[0]}=%{customdata[2]}<br>Năm=%{customdata[1]}<extra></extra>",
+                                         visible=vis))
             fig.update_layout(height=450, legend_title_text="Chỉ tiêu", separators=",.", xaxis_title="Năm thu thập", yaxis_title="Giá trị")
-            fig.update_yaxes(tickformat=",.2f" if all_pct else ",.0f")
+            fig.update_yaxes(tickformat=",.2f" if m["__is_pct__"].all() else ",.0f")
             fig.update_xaxes(tickformat="d")
-            fig.update_layout(margin=dict(t=60,r=20,b=40,l=60), legend=dict(orientation="h", yanchor="top", y=-0.2), uniformtext_minsize=10, uniformtext_mode="hide")
             st.plotly_chart(fig, use_container_width=True)
 
         if "Bar" in chart_types:
@@ -753,4 +763,3 @@ Trình bày NGẮN GỌN theo các đề mục sau (chỉ dùng tiêu đề ti�
                         st.error(f"Lỗi khi gọi OpenAI: {e}")
 
 # Footer
-
