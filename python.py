@@ -515,8 +515,13 @@ with tab_charts:
             for ind_name in m["Indicator"].drop_duplicates().tolist():
                 sub = m[m["Indicator"] == ind_name].copy()
                 label_arr = _np.array([ind_name] * len(sub), dtype=object)
-                year_arr = sub["Year"].astype(int).values if "Year" in sub.columns else m.loc[m["Indicator"]==ind_name,"Year"].astype(int).values
-                val_arr = sub["__val_fmt__"].values if "__val_fmt__" in sub.columns else m.loc[m["Indicator"]==ind_name,"__val_fmt__"].values
+                year_arr = m.loc[m["Indicator"].eq(ind_name), "Year"].astype(int).to_numpy()
+                val_arr  = m.loc[m["Indicator"].eq(ind_name), "__val_fmt__"].to_numpy()
+                # Nếu vì lý do nào đó độ dài không khớp, suy hao về số điểm của sub
+                if len(year_arr) != len(sub):
+                    year_arr = sub["Year"].astype(int).to_numpy()
+                if len(val_arr) != len(sub):
+                    val_arr = sub["__val_fmt__"].to_numpy() if "__val_fmt__" in sub.columns else _np.array([_format_number_vn(v) for v in sub["Value"]])
                 cd = _np.stack([label_arr, year_arr, val_arr], axis=-1)
                 vis = True if _norm(ind_name) == _norm(_default_name) else "legendonly"
                 fig.add_trace(go.Scatter(x=sub["Year"], y=sub["Value"], mode="lines+markers", name=ind_name,
