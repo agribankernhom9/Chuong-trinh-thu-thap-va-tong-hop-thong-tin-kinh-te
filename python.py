@@ -411,17 +411,18 @@ def build_display_df(numeric_df: pd.DataFrame) -> pd.DataFrame:
     rename_map = {c: get_vn_label_with_unit(c) for c in df.columns if c != "Year"}
     df_renamed = df.rename(columns=rename_map)
 
-    # Định dạng: nếu KHÔNG phải %, làm tròn 0 & nghìn phân cách
+    # Định dạng số kiểu Việt Nam cho mọi cột (thêm % khi là đơn vị phần trăm)
     formatted = df_renamed.copy()
-    inv = {get_vn_label_with_unit(code): code for code in raw_df.columns if code != "Year"}
+    inv = {get_vn_label_with_unit(code): code for code in df.columns if code != "Year"}
     for c in formatted.columns:
         if c == "Year":
             continue
-        code = inv.get(c, None)
-        if code and not is_percent_unit(code):
-            formatted[c] = formatted[c].apply(lambda v: f"{int(round(v)):,}" if pd.notna(v) else v)
+        code0 = inv.get(c, None)
+        is_pct = (code0 is not None) and is_percent_unit(code0) or ("%" in str(c))
+        if is_pct:
+            formatted[c] = formatted[c].apply(lambda v: (_format_number_vn(v, decimals_auto=False, force_decimals=2) + " %") if pd.notna(v) else "")
         else:
-            formatted[c] = formatted[c].apply(lambda v: None if pd.isna(v) else round(float(v), 2))
+            formatted[c] = formatted[c].apply(lambda v: _format_number_vn(v) if pd.notna(v) else "")
     return formatted
 
 display_df = build_display_df(imputed_df)
@@ -438,7 +439,7 @@ tab_data, tab_charts, tab_stats, tab_download, tab_ai = st.tabs([
 ])
 
 with tab_data:
-    st.subheader("Bảng dữ liệu đã xử lý")
+    st.subheader("Bảng số liệu đã thu thập")
 
     # Xử lý thiếu dữ liệu: chỉ hiện khi có thiếu
     if has_missing:
@@ -464,6 +465,8 @@ with tab_data:
     # Cột STT bắt đầu từ 1
     if not display_df.empty:
         df_show = display_df.copy()
+        if "Year" in df_show.columns:
+            df_show = df_show.rename(columns={"Year": "Năm dữ liệu"})
         df_show.index = np.arange(1, len(df_show) + 1)
         df_show.index.name = "STT"
         st.dataframe(df_show, use_container_width=True, height=420)
@@ -504,8 +507,12 @@ with tab_charts:
                 return f"{r['Indicator']}={val}<br>Năm={int(r['Year'])}"
             m["Hover"] = m.apply(_fmt_row, axis=1)
             fig = px.line(m, x="Year", y="Value", color="Indicator", markers=True, hover_data=None)
-            fig.update_traces(hovertemplate="%{text}<extra></extra>", text=m["Hover"])
-            fig.update_layout(height=450, legend_title_text="Chỉ tiêu")
+            fig.update_traces(hovertext=m["Hover"], hovertemplate="%{hovertext}<extra></extra>")
+            all_pct = m["Indicator"].astype(str).str.contains("%").all()
+            fig.update_layout(height=450, legend_title_text="Chỉ tiêu", separators=",.", xaxis_title="Năm thu thập", yaxis_title="Giá trị")
+            fig.update_yaxes(tickformat=",.2f" if all_pct else ",.0f")
+            fig.update_xaxes(tickformat="d")
+            fig.update_layout(margin=dict(t=60,r=20,b=40,l=60), legend=dict(orientation="h", yanchor="top", y=-0.2), uniformtext_minsize=10, uniformtext_mode="hide")
             st.plotly_chart(fig, use_container_width=True)
 
         if "Bar" in chart_types:
@@ -515,8 +522,11 @@ with tab_charts:
             _is_pct = "%" in get_vn_label_with_unit(bar_col)
             df_bar["Hover"] = df_bar.apply(lambda r: f"{get_vn_label_with_unit(bar_col)}=" + (_format_number_vn(r[bar_col], decimals_auto=False, force_decimals=2) + " %" if _is_pct else _format_number_vn(r[bar_col])) + f"<br>Năm={int(r['Year'])}", axis=1)
             fig = px.bar(df_bar, x="Year", y=bar_col, title=get_vn_label_with_unit(bar_col), hover_data=None)
-            fig.update_traces(hovertemplate="%{text}<extra></extra>", text=df_bar["Hover"])
-            fig.update_layout(height=420)
+            fig.update_traces(hovertext=df_bar["Hover"], hovertemplate="%{hovertext}<extra></extra>")
+            fig.update_layout(height=420, separators=",.", xaxis_title="Năm thu thập", yaxis_title="Giá trị")
+            fig.update_yaxes(tickformat=",.2f" if _is_pct else ",.0f")
+            fig.update_xaxes(tickformat="d")
+            fig.update_layout(margin=dict(t=60,r=20,b=40,l=60), legend=dict(orientation="h", yanchor="top", y=-0.2), uniformtext_minsize=10, uniformtext_mode="hide")
             st.plotly_chart(fig, use_container_width=True)
 
         if "Combo" in chart_types:
@@ -534,14 +544,16 @@ with tab_charts:
             fig.add_bar(x=df_plot["Year"], y=df_plot[bar_c], name=get_vn_label_with_unit(bar_c), hovertext=bar_hover, hovertemplate="%{hovertext}<extra></extra>")
             _is_pct_line = "%" in get_vn_label_with_unit(line_c)
             line_hover = [f"{get_vn_label_with_unit(line_c)}=" + (_format_number_vn(v, decimals_auto=False, force_decimals=2) + " %" if _is_pct_line else _format_number_vn(v)) + f"<br>Năm={int(y)}" for v, y in zip(df_plot[line_c], df_plot["Year"])]
-            fig.add_trace(go.Scatter(x=df_plot["Year"], y=df_plot[line_c], mode="lines+markers",
-                                     name=get_vn_label_with_unit(line_c), yaxis="y2", hovertext=line_hover, hovertemplate="%{hovertext}<extra></extra>"))
+            fig.add_trace(go.Scatter(x=df_plot["Year"], y=df_plot[line_c], mode="lines+markers", name=get_vn_label_with_unit(line_c), yaxis="y2", hovertext=line_hover, hovertemplate="%{hovertext}<extra></extra>"))
             fig.update_layout(
                 height=450,
-                yaxis=dict(title=get_vn_label_with_unit(bar_c)),
-                yaxis2=dict(title=get_vn_label_with_unit(line_c), overlaying='y', side='right'),
+                separators=",.",
+                xaxis_title="Năm thu thập",
+                yaxis=dict(title=get_vn_label_with_unit(bar_c), tickformat=",.2f" if _is_pct_bar else ",.0f"),
+                yaxis2=dict(title=get_vn_label_with_unit(line_c), overlaying='y', side='right', tickformat=",.2f" if _is_pct_line else ",.0f"),
                 legend_title_text="Chỉ tiêu"
             )
+            fig.update_layout(margin=dict(t=60,r=20,b=40,l=60), legend=dict(orientation="h", yanchor="top", y=-0.2), uniformtext_minsize=10, uniformtext_mode="hide")
             st.plotly_chart(fig, use_container_width=True)
 
         if "Scatter" in chart_types:
@@ -561,12 +573,15 @@ with tab_charts:
                 _hover = [f"{get_vn_label_with_unit(scatter_x)}=" + (_format_number_vn(x, decimals_auto=False, force_decimals=2) + " %" if isx else _format_number_vn(x)) + "<br>" + f"{get_vn_label_with_unit(scatter_y)}=" + (_format_number_vn(y, decimals_auto=False, force_decimals=2) + " %" if isy else _format_number_vn(y)) + f"<br>Năm={int(yr)}" for x, y, yr in zip(sc[scatter_x], sc[scatter_y], sc["Year"])]
                 fig = px.scatter(sc, x=scatter_x, y=scatter_y, hover_data=None)
                 fig.update_traces(hovertext=_hover, hovertemplate="%{hovertext}<extra></extra>")
-                fig.update_layout(height=420, xaxis_title=get_vn_label_with_unit(scatter_x), yaxis_title=get_vn_label_with_unit(scatter_y))
+                fig.update_layout(height=420, separators=",.", xaxis_title="Năm thu thập", yaxis_title=get_vn_label_with_unit(scatter_y))
+                fig.update_xaxes(tickformat="d")
+                fig.update_yaxes(tickformat=",.2f" if isy else ",.0f")
                 trend = add_trendline(sc, scatter_x, scatter_y)
                 if trend:
                     x_line, y_line, a, b = trend
                     fig.add_trace(go.Scatter(x=x_line, y=y_line, mode="lines", name=f"Đường xu hướng (y≈{a:.2f}x+{b:.2f})"))
-                st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(margin=dict(t=60,r=20,b=40,l=60), legend=dict(orientation="h", yanchor="top", y=-0.2), uniformtext_minsize=10, uniformtext_mode="hide")
+            st.plotly_chart(fig, use_container_width=True)
 
         if "Heatmap" in chart_types:
             st.markdown("**Biểu đồ nhiệt — Ma trận tương quan**")
@@ -579,7 +594,8 @@ with tab_charts:
                 corr_vn.index = [get_vn_label_with_unit(c) for c in corr_vn.index]
                 fig = px.imshow(corr_vn, text_auto=".2f", aspect="auto", color_continuous_scale="RdBu", origin="lower")
                 fig.update_layout(height=520, coloraxis_colorbar=dict(title="r"))
-                st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(margin=dict(t=60,r=20,b=40,l=60), legend=dict(orientation="h", yanchor="top", y=-0.2), uniformtext_minsize=10, uniformtext_mode="hide")
+            st.plotly_chart(fig, use_container_width=True)
 
 with tab_stats:
     st.subheader("Bảng thống kê mô tả")
@@ -587,16 +603,24 @@ with tab_stats:
         st.info("Chưa có dữ liệu để tính thống kê.")
     else:
         disp = stats_df.copy()
+        # Định dạng số theo chuẩn VN
+        is_percent_row = disp["Chỉ tiêu"].astype(str).str.contains("%")
         num_cols = ["Giá trị TB (Mean)", "Độ lệch chuẩn (Std)", "Nhỏ nhất (Min)",
                     "Lớn nhất (Max)", "Trung vị (Median)", "Q1", "Q3", "Hệ số biến thiên (CV%)"]
         for c in num_cols:
             if c in disp.columns:
-                disp[c] = disp[c].astype(float).round(3)
+                def _fmt(v, is_pct):
+                    if c == "Hệ số biến thiên (CV%)" or is_pct:
+                        s = _format_number_vn(v, decimals_auto=False, force_decimals=2)
+                        return (s + " %") if s != "" else s
+                    return _format_number_vn(v)
+                disp[c] = [ _fmt(v, bool(is_percent_row.iloc[i]) if i < len(is_percent_row) else False)
+                            for i, v in enumerate(disp[c].tolist()) ]
         disp_show = disp.copy()
         disp_show.index = np.arange(1, len(disp_show) + 1)
         disp_show.index.name = "STT"
         st.dataframe(disp_show, use_container_width=True, height=420)
-        st.caption("Nguồn dữ liệu: " + "; ".join(source_list))
+    st.caption("Nguồn dữ liệu: " + "; ".join(source_list))
 
 with tab_download:
     st.subheader("Tải dữ liệu")
@@ -718,4 +742,3 @@ Trình bày NGẮN GỌN theo các đề mục sau (chỉ dùng tiêu đề ti�
                         st.error(f"Lỗi khi gọi OpenAI: {e}")
 
 # Footer
-st.caption("© 2025 — Viet Macro Intelligence • Nguồn: " + "; ".join(source_list))
