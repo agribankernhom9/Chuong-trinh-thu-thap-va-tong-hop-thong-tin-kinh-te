@@ -514,7 +514,10 @@ with tab_charts:
             _default_name = get_vn_label_with_unit("NY.GDP.PCAP.CD")
             for ind_name in m["Indicator"].drop_duplicates().tolist():
                 sub = m[m["Indicator"] == ind_name].copy()
-                cd = _np.stack([sub["Indicator"].values, sub["Year"].astype(int).values, sub["__val_fmt__"].values], axis=-1)
+                label_arr = _np.array([ind_name] * len(sub), dtype=object)
+                year_arr = sub["Year"].astype(int).values if "Year" in sub.columns else m.loc[m["Indicator"]==ind_name,"Year"].astype(int).values
+                val_arr = sub["__val_fmt__"].values if "__val_fmt__" in sub.columns else m.loc[m["Indicator"]==ind_name,"__val_fmt__"].values
+                cd = _np.stack([label_arr, year_arr, val_arr], axis=-1)
                 vis = True if _norm(ind_name) == _norm(_default_name) else "legendonly"
                 fig.add_trace(go.Scatter(x=sub["Year"], y=sub["Value"], mode="lines+markers", name=ind_name,
                                          customdata=cd,
