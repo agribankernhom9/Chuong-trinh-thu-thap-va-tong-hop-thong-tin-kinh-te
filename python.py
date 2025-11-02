@@ -592,7 +592,15 @@ with tab_charts:
                 corr_vn = corr.copy()
                 corr_vn.columns = [get_vn_label_with_unit(c) for c in corr_vn.columns]
                 corr_vn.index = [get_vn_label_with_unit(c) for c in corr_vn.index]
-                fig = px.imshow(corr_vn, text_auto=".2f", aspect="auto", color_continuous_scale="RdBu", origin="lower")
+                corr_vn = corr.copy()
+                corr_vn.columns = [get_vn_label_with_unit(c) for c in corr_vn.columns]
+                corr_vn.index = [get_vn_label_with_unit(c) for c in corr_vn.index]
+                _labels = corr.round(2).applymap(lambda v: f"{v:.2f}".replace(".", ","))
+                _labels.index = corr_vn.index
+                _labels.columns = corr_vn.columns
+                fig = px.imshow(corr_vn, text=_labels, aspect="auto", color_continuous_scale="RdBu", origin="lower")
+                fig.update_layout(separators=",.")
+                fig.update_coloraxes(colorbar_tickformat=",.2f")
                 fig.update_layout(height=520, coloraxis_colorbar=dict(title="r"))
                 fig.update_layout(margin=dict(t=60,r=20,b=40,l=60), legend=dict(orientation="h", yanchor="top", y=-0.2), uniformtext_minsize=10, uniformtext_mode="hide")
             st.plotly_chart(fig, use_container_width=True)
